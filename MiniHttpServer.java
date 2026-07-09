@@ -31,7 +31,15 @@ public final class MiniHttpServer {
             if (requestLine == null || requestLine.isBlank()) {
                 return;
             }
-            writeResponse(out, 404, "Not Found", "not found");
+            String[] parts = requestLine.split(" ");
+            String method = parts.length > 0 ? parts[0] : "";
+            String path = parts.length > 1 ? parts[1] : "";
+
+            if ("GET".equals(method) && "/health".equals(path)) {
+                writeResponse(out, 200, "OK", "OK");
+            } else {
+                writeResponse(out, 404, "Not Found", "Not Found");
+            }
         } catch (IOException ignored) {
         }
     }
