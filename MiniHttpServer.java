@@ -28,28 +28,60 @@ public final class MiniHttpServer {
             OutputStream out = socket.getOutputStream();
 
             String requestLine = in.readLine();
-            if (requestLine == null || requestLine.isBlank()) {
+            if (requestLine == null) {
                 return;
             }
-            String[] parts = requestLine.split(" ");
-            String method = parts.length > 0 ? parts[0] : "";
-            String path = parts.length > 1 ? parts[1] : "";
 
-            if ("GET".equals(method) && "/health".equals(path)) {
-                writeResponse(out, 200, "OK", "OK");
-            } else {
-                writeResponse(out, 404, "Not Found", "Not Found");
+            // request-line: METHOD 공백 target 공백 HTTP-version   e.g. "GET /health HTTP/1.1"
+            String[] tokens = requestLine.split(" ");
+            if (!isWellFormedRequestLine(tokens)) {
+                writeResponse(out, 400, "Bad Request", "Bad Request");
+                return;
             }
+
+            String method = tokens[0];
+            String path = stripQuery(tokens[1]);
+
+            route(out, method, path);
         } catch (IOException ignored) {
         }
     }
 
+    private static void route(OutputStream out, String method, String path) throws IOException {
+        switch (path) {
+            case "/health":
+                if ("GET".equals(method)) {
+                    writeResponse(out, 200, "OK", "OK");
+                } else {
+                    writeResponse(out, 405, "Method Not Allowed", "Method Not Allowed", "Allow: GET\r\n");
+                }
+                break;
+            default:
+                writeResponse(out, 404, "Not Found", "Not Found");
+        }
+    }
+
+    private static boolean isWellFormedRequestLine(String[] tokens) {
+        return tokens.length == 3 && tokens[2].startsWith("HTTP/");
+    }
+
+    private static String stripQuery(String target) {
+        int q = target.indexOf('?');
+        return q >= 0 ? target.substring(0, q) : target;
+    }
+
     private static void writeResponse(OutputStream out, int status, String reason, String body)
             throws IOException {
+        writeResponse(out, status, reason, body, "");
+    }
+
+    private static void writeResponse(OutputStream out, int status, String reason, String body,
+            String extraHeaders) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         String head = "HTTP/1.1 " + status + " " + reason + "\r\n"
                 + "Content-Type: text/plain; charset=utf-8\r\n"
                 + "Content-Length: " + bytes.length + "\r\n"
+                + extraHeaders
                 + "Connection: close\r\n\r\n";
         out.write(head.getBytes(StandardCharsets.ISO_8859_1));
         out.write(bytes);
