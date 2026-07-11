@@ -8,6 +8,7 @@ import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Deque;
 
 public final class MiniHttpServer {
@@ -18,6 +19,7 @@ public final class MiniHttpServer {
     private static final int WORK_DURATION_MS = 1000;
     private static final int WORK_WORKERS = 4;
     private static final int WORK_QUEUE_CAPACITY = 8;
+    private static final int WORK_CHUNK_BYTES = 8192;
 
     private static final WorkerPool WORK_POOL = new WorkerPool(WORK_WORKERS, WORK_QUEUE_CAPACITY);
 
@@ -61,8 +63,9 @@ public final class MiniHttpServer {
 
             String method = tokens[0];
             String path = stripQuery(tokens[1]);
+            String query = queryOf(tokens[1]);
 
-            route(out, method, path);
+            route(out, method, path, query);
         } catch (IOException ignored) {
             // client disconnect 등은 해당 connection만 정리 (thread-per-connection이라 격리됨)
         }
@@ -106,7 +109,7 @@ public final class MiniHttpServer {
         }
     }
 
-    private static void route(OutputStream out, String method, String path) throws IOException {
+    private static void route(OutputStream out, String method, String path, String query) throws IOException {
         switch (path) {
             case "/health":
                 if ("GET".equals(method)) {
@@ -117,7 +120,7 @@ public final class MiniHttpServer {
                 break;
             case "/work":
                 if ("GET".equals(method)) {
-                    handleWork(out);
+                    handleWork(out, query);
                 } else {
                     writeResponse(out, 405, "Method Not Allowed", "Method Not Allowed", "Allow: GET\r\n");
                 }
@@ -127,10 +130,25 @@ public final class MiniHttpServer {
         }
     }
 
-    // 1초 작업을 custom thread pool에서 실행한다. 큐가 가득 차 있으면 503.
+    // /work: 1초 작업을 custom thread pool에서 실행한다. 큐가 가득 차 있으면 503.
     // worker는 작업(1초)만 수행하고 응답 write는 이 connection thread가 담당한다.
-    // → 느린 client의 read가 worker를 붙잡지 않아 work 처리량이 보호된다.
-    private static void handleWork(OutputStream out) throws IOException {
+    // bytes=N이 지정되면 done 대신 정확히 N바이트를 반환한다 (음수·비숫자·int 범위 초과는 400).
+    private static void handleWork(OutputStream out, String query) throws IOException {
+        String bytesParam = paramValue(query, "bytes");
+        int n = 0;
+        if (bytesParam != null) {
+            try {
+                n = Integer.parseInt(bytesParam);
+            } catch (NumberFormatException e) {
+                writeResponse(out, 400, "Bad Request", "Bad Request");
+                return;
+            }
+            if (n < 0) {
+                writeResponse(out, 400, "Bad Request", "Bad Request");
+                return;
+            }
+        }
+
         WorkResult result = new WorkResult();
         boolean accepted = WORK_POOL.submit(() -> {
             try {
@@ -151,7 +169,11 @@ public final class MiniHttpServer {
             Thread.currentThread().interrupt();
             return;
         }
-        writeResponse(out, 200, "OK", "done");
+        if (bytesParam != null) {
+            writeByteBody(out, n);
+        } else {
+            writeResponse(out, 200, "OK", "done");
+        }
     }
 
     private static boolean isWellFormedRequestLine(String[] tokens) {
@@ -161,6 +183,26 @@ public final class MiniHttpServer {
     private static String stripQuery(String target) {
         int q = target.indexOf('?');
         return q >= 0 ? target.substring(0, q) : target;
+    }
+
+    private static String queryOf(String target) {
+        int q = target.indexOf('?');
+        return q >= 0 ? target.substring(q + 1) : null;
+    }
+
+    // 쿼리 문자열에서 key의 값을 찾는다. 없으면 null, "key=" 처럼 값이 비면 "".
+    private static String paramValue(String query, String key) {
+        if (query == null) {
+            return null;
+        }
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf('=');
+            String k = eq >= 0 ? pair.substring(0, eq) : pair;
+            if (k.equals(key)) {
+                return eq >= 0 ? pair.substring(eq + 1) : "";
+            }
+        }
+        return null;
     }
 
     private static void writeResponse(OutputStream out, int status, String reason, String body)
@@ -178,6 +220,25 @@ public final class MiniHttpServer {
                 + "Connection: close\r\n\r\n";
         out.write(head.getBytes(StandardCharsets.ISO_8859_1));
         out.write(bytes);
+        out.flush();
+    }
+
+    // Content-Length: n 을 보낸 뒤 'a' n바이트를 고정 버퍼로 나눠 write한다.
+    // 통짜 할당 대신 스트리밍이라 N이 커도 메모리는 버퍼 크기로 일정하다.
+    private static void writeByteBody(OutputStream out, int n) throws IOException {
+        String head = "HTTP/1.1 200 OK\r\n"
+                + "Content-Type: text/plain; charset=utf-8\r\n"
+                + "Content-Length: " + n + "\r\n"
+                + "Connection: close\r\n\r\n";
+        out.write(head.getBytes(StandardCharsets.ISO_8859_1));
+        byte[] chunk = new byte[Math.min(n, WORK_CHUNK_BYTES)];
+        Arrays.fill(chunk, (byte) 'a');
+        int remaining = n;
+        while (remaining > 0) {
+            int len = Math.min(chunk.length, remaining);
+            out.write(chunk, 0, len);
+            remaining -= len;
+        }
         out.flush();
     }
 
