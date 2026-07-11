@@ -15,10 +15,12 @@ java MiniHttpServer
 | Method | Path | 응답 |
 |---|---|---|
 | GET | `/health` | 200 `OK` |
+| GET | `/work` | custom thread pool에서 1초 작업 후 200 `done` (과부하 시 503) |
 
 ## 동작 확인
 ```bash
 curl -i localhost:8080/health   # 200 OK
+curl -i localhost:8080/work     # 1초 후 200 done
 curl -i localhost:8080/nope     # 404 Not Found
 ```
 
