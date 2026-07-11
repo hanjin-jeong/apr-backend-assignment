@@ -26,4 +26,10 @@ curl -s localhost:8080/work?bytes=5    # 1초 후 aaaaa (5바이트)
 curl -i localhost:8080/nope            # 404 Not Found
 ```
 
+## 테스트
+```bash
+javac MiniHttpServer.java MiniHttpServerTest.java
+java MiniHttpServerTest          # 스모크 테스트 (8080 비어 있어야 함)
+```
+
 설계 상세는 [DESIGN.md](./DESIGN.md) 참고.
