@@ -16,12 +16,14 @@ java MiniHttpServer
 |---|---|---|
 | GET | `/health` | 200 `OK` |
 | GET | `/work` | custom thread pool에서 1초 작업 후 200 `done` (과부하 시 503) |
+| GET | `/work?bytes=N` | `done` 대신 정확히 N바이트 반환 (음수·비숫자는 400) |
 
 ## 동작 확인
 ```bash
-curl -i localhost:8080/health   # 200 OK
-curl -i localhost:8080/work     # 1초 후 200 done
-curl -i localhost:8080/nope     # 404 Not Found
+curl -i localhost:8080/health          # 200 OK
+curl -i localhost:8080/work            # 1초 후 200 done
+curl -s localhost:8080/work?bytes=5    # 1초 후 aaaaa (5바이트)
+curl -i localhost:8080/nope            # 404 Not Found
 ```
 
 설계 상세는 [DESIGN.md](./DESIGN.md) 참고.
